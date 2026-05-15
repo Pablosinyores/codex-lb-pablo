@@ -32,7 +32,7 @@ from app.core.auth.refresh import (
     pop_token_refresh_timeout_override,
     push_token_refresh_timeout_override,
 )
-from app.core.balancer import PERMANENT_FAILURE_CODES, RoutingStrategy, failover_decision
+from app.core.balancer import PERMANENT_FAILURE_CODES, ResetPreferenceWindow, RoutingStrategy, failover_decision
 from app.core.balancer.rendezvous_hash import select_node
 from app.core.balancer.types import ClassifiedFailure, UpstreamError
 from app.core.clients.files import FileProxyError, pop_files_timeout_overrides, push_files_timeout_overrides
@@ -1927,6 +1927,7 @@ class ProxyService:
         rewritten_file_account_id = await self._resolve_file_account_for_responses(payload, headers)
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
+        prefer_earlier_reset_window = _prefer_earlier_reset_window(settings)
         had_prompt_cache_key = _prompt_cache_key_from_request_model(payload) is not None
         affinity = _sticky_key_for_compact_request(
             payload,
@@ -2001,6 +2002,7 @@ class ProxyService:
                     reallocate_sticky=affinity.reallocate_sticky,
                     sticky_max_age_seconds=affinity.max_age_seconds,
                     prefer_earlier_reset_accounts=prefer_earlier_reset,
+                    prefer_earlier_reset_window=prefer_earlier_reset_window,
                     routing_strategy=routing_strategy,
                     model=payload.model,
                     exclude_account_ids=excluded_account_ids,
@@ -2715,6 +2717,7 @@ class ProxyService:
 
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
+        prefer_earlier_reset_window = _prefer_earlier_reset_window(settings)
         routing_strategy = _routing_strategy(settings)
         try:
             selection = await self._select_account_with_budget_compatible(
@@ -2723,6 +2726,7 @@ class ProxyService:
                 kind="transcribe",
                 api_key=api_key,
                 prefer_earlier_reset_accounts=prefer_earlier_reset,
+                prefer_earlier_reset_window=prefer_earlier_reset_window,
                 routing_strategy=routing_strategy,
                 model=None,
             )
@@ -3156,6 +3160,7 @@ class ProxyService:
 
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
+        prefer_earlier_reset_window = _prefer_earlier_reset_window(settings)
         routing_strategy = _routing_strategy(settings)
         try:
             selection = await self._select_account_with_budget_compatible(
@@ -3164,6 +3169,7 @@ class ProxyService:
                 kind=kind,
                 api_key=api_key,
                 prefer_earlier_reset_accounts=prefer_earlier_reset,
+                prefer_earlier_reset_window=prefer_earlier_reset_window,
                 routing_strategy=routing_strategy,
                 model=None,
                 preferred_account_id=preferred_account_id,
@@ -3344,6 +3350,7 @@ class ProxyService:
         runtime_settings = get_settings()
         settings = await get_settings_cache().get()
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
+        prefer_earlier_reset_window = _prefer_earlier_reset_window(settings)
         sticky_threads_enabled = settings.sticky_threads_enabled
         openai_cache_affinity_max_age_seconds = settings.openai_cache_affinity_max_age_seconds
         routing_strategy = _routing_strategy(settings)
@@ -3763,6 +3770,7 @@ class ProxyService:
                         reallocate_sticky=request_affinity.reallocate_sticky,
                         sticky_max_age_seconds=request_affinity.max_age_seconds,
                         prefer_earlier_reset=prefer_earlier_reset,
+                        prefer_earlier_reset_window=prefer_earlier_reset_window,
                         routing_strategy=routing_strategy,
                         model=request_state.model,
                         request_state=request_state,
@@ -4291,6 +4299,7 @@ class ProxyService:
         sticky_key: str | None,
         sticky_kind: StickySessionKind | None,
         prefer_earlier_reset: bool,
+        prefer_earlier_reset_window: ResetPreferenceWindow,
         routing_strategy: RoutingStrategy,
         model: str | None,
         request_state: _WebSocketRequestState,
@@ -4315,6 +4324,7 @@ class ProxyService:
                 "sticky_key": sticky_key,
                 "sticky_kind": sticky_kind,
                 "prefer_earlier_reset": prefer_earlier_reset,
+                "prefer_earlier_reset_window": prefer_earlier_reset_window,
                 "routing_strategy": routing_strategy,
                 "model": model,
                 "request_state": request_state,
@@ -4421,6 +4431,7 @@ class ProxyService:
         sticky_key: str | None,
         sticky_kind: StickySessionKind | None,
         prefer_earlier_reset: bool,
+        prefer_earlier_reset_window: ResetPreferenceWindow,
         routing_strategy: RoutingStrategy,
         model: str | None,
         request_state: _WebSocketRequestState,
@@ -4445,6 +4456,7 @@ class ProxyService:
                 reallocate_sticky=reallocate_sticky,
                 sticky_max_age_seconds=sticky_max_age_seconds,
                 prefer_earlier_reset_accounts=prefer_earlier_reset,
+                prefer_earlier_reset_window=prefer_earlier_reset_window,
                 routing_strategy=routing_strategy,
                 model=model,
                 exclude_account_ids=exclude_account_ids,
@@ -9340,6 +9352,7 @@ class ProxyService:
         settings = await get_settings_cache().get()
         deadline = start + base_settings.proxy_request_budget_seconds
         prefer_earlier_reset = settings.prefer_earlier_reset_accounts
+        prefer_earlier_reset_window = _prefer_earlier_reset_window(settings)
         upstream_stream_transport = _resolve_upstream_stream_transport(settings.upstream_stream_transport)
         if request_transport == _REQUEST_TRANSPORT_HTTP and upstream_stream_transport == "websocket":
             # HTTP/SSE clients can retry a half-rendered turn after an upstream
@@ -9435,6 +9448,7 @@ class ProxyService:
                         reallocate_sticky=affinity.reallocate_sticky,
                         sticky_max_age_seconds=affinity.max_age_seconds,
                         prefer_earlier_reset_accounts=prefer_earlier_reset,
+                        prefer_earlier_reset_window=prefer_earlier_reset_window,
                         routing_strategy=routing_strategy,
                         model=payload.model,
                         exclude_account_ids=excluded_account_ids,
@@ -11036,6 +11050,7 @@ class ProxyService:
         reallocate_sticky: bool = False,
         sticky_max_age_seconds: int | None = None,
         prefer_earlier_reset_accounts: bool = False,
+        prefer_earlier_reset_window: ResetPreferenceWindow = "primary",
         routing_strategy: RoutingStrategy = "capacity_weighted",
         model: str | None = None,
         additional_limit_name: str | None = None,
@@ -11068,6 +11083,7 @@ class ProxyService:
                         reallocate_sticky=reallocate_sticky,
                         sticky_max_age_seconds=sticky_max_age_seconds,
                         prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
+                        prefer_earlier_reset_window=prefer_earlier_reset_window,
                         routing_strategy=routing_strategy,
                         model=model,
                         additional_limit_name=additional_limit_name,
@@ -11089,6 +11105,7 @@ class ProxyService:
                     reallocate_sticky=reallocate_sticky,
                     sticky_max_age_seconds=sticky_max_age_seconds,
                     prefer_earlier_reset_accounts=prefer_earlier_reset_accounts,
+                    prefer_earlier_reset_window=prefer_earlier_reset_window,
                     routing_strategy=routing_strategy,
                     model=model,
                     additional_limit_name=additional_limit_name,
@@ -13349,6 +13366,11 @@ def _routing_strategy(settings: DashboardSettings) -> RoutingStrategy:
     if value == "usage_weighted":
         return "usage_weighted"
     return "capacity_weighted"
+
+
+def _prefer_earlier_reset_window(settings: DashboardSettings) -> ResetPreferenceWindow:
+    value = getattr(settings, "prefer_earlier_reset_window", "primary")
+    return "secondary" if value == "secondary" else "primary"
 
 
 def _parse_websocket_payload(text: str) -> dict[str, JsonValue] | None:
