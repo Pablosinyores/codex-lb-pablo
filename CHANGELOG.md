@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.19.1](https://github.com/Soju06/codex-lb/compare/v1.19.0...v1.19.1) (2026-05-26)
+
+
+### Bug Fixes
+
+* **proxy:** classify stale Codex websocket anchors ([#801](https://github.com/Soju06/codex-lb/issues/801)) ([93ce129](https://github.com/Soju06/codex-lb/commit/93ce1299a73dab1d2f5231bf4d39fb99d2c135ff))
+* **proxy:** recover websocket terminal auth failures ([#809](https://github.com/Soju06/codex-lb/issues/809)) ([098100f](https://github.com/Soju06/codex-lb/commit/098100f7d84548ab9a2e88b8c4bcc1d9004a6743))
+
 ## [1.19.0](https://github.com/Soju06/codex-lb/compare/v1.18.2...v1.19.0) (2026-05-25)
 
 
